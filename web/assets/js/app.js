@@ -22,6 +22,8 @@ const ui = {
 let db;
 let SQL;
 const config = window.LEGOLOCKER_CONFIG || {};
+const dbDirectory = '/persist';
+const dbPath = `${dbDirectory}/legolocker.db`;
 
 const defaultInventory = [
   { id: '75192', name: 'Millennium Falcon (UCS)', type: 'set', quantity: 1, notes: 'Stored on display shelf.' },
@@ -33,6 +35,52 @@ const defaultWishlist = [
   { id: '10316', title: 'The Lord of the Rings: Rivendell', subtitle: 'Notify me when discounted.' },
   { id: '31154', title: 'Forest Animals: Red Fox', subtitle: 'Great parts pack for orange slopes.' },
 ];
+
+function syncFilesystem(populateFromIndexedDb = false) {
+  return new Promise((resolve, reject) => {
+    SQL.FS.syncfs(populateFromIndexedDb, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function initFilesystem() {
+  if (!SQL?.FS?.mount || !SQL?.IDBFS) return;
+  try {
+    SQL.FS.mkdir(dbDirectory);
+  } catch (error) {
+    if (error.code !== 'EEXIST') {
+      throw error;
+    }
+  }
+  SQL.FS.mount(SQL.IDBFS, {}, dbDirectory);
+  await syncFilesystem(true);
+}
+
+function readPersistedDatabase() {
+  try {
+    const file = SQL.FS.readFile(dbPath);
+    if (file?.length) {
+      return file;
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error('Failed to read persisted database', error);
+    }
+  }
+  return null;
+}
+
+async function persistDb() {
+  if (!db) return;
+  const data = db.export();
+  SQL.FS.writeFile(dbPath, data);
+  await syncFilesystem(false);
+}
 
 function asWishlistItem(item) {
   return { id: item.id, title: item.title, subtitle: item.subtitle };
@@ -59,39 +107,7 @@ function setActiveTab(id) {
   ui.tabs.forEach((tab) => {
     const isActive = tab.dataset.tab === id;
     tab.classList.toggle('active', isActive);
-    tab.setAttribute('aria-selected', String(isActive));
-  });
-  ui.panels.forEach((panel) => {
-    panel.classList.toggle('active', panel.id === id);
-  });
-}
-
-function toggleModal(modal, show) {
-  if (show) {
-    modal.removeAttribute('hidden');
-  } else {
-    modal.setAttribute('hidden', '');
-  }
-}
-
-function renderInventory(items) {
-  ui.inventoryGrid.innerHTML = '';
-  items.forEach((item) => {
-    const card = ui.cardTemplate.content.firstElementChild.cloneNode(true);
-    if (item.rowId) {
-      card.dataset.rowid = item.rowId;
-    }
-    card.querySelector('.card-title').textContent = item.name;
-    card.querySelector('.card-note').textContent = item.notes || 'No notes yet.';
-    card.querySelector('.quantity').textContent = item.quantity;
-    card.querySelector('.type-pill').textContent = item.type;
-    card.querySelector('.type-pill').classList.add(`pill-${item.type}`);
-    card.querySelector('.id-pill').textContent = item.id;
-    card.querySelector('.add-to-wishlist').addEventListener('click', () => addWishlistItem({
-      rowId: item.rowId,
-      id: item.id,
-      title: item.name,
-      subtitle: `${item.type.toUpperCase()} • ${item.quantity} pcs`,
+@@ -95,84 +143,84 @@ function renderInventory(items) {
     }));
     ui.inventoryGrid.appendChild(card);
   });
@@ -117,17 +133,17 @@ function createWishlistNode(item) {
   const purchaseButton = document.createElement('button');
   purchaseButton.className = 'primary small';
   purchaseButton.textContent = 'Mark acquired';
-  purchaseButton.addEventListener('click', () => {
+  purchaseButton.addEventListener('click', async () => {
     node.remove();
-    handleWishlistRemoval(item, `${item.title} marked as acquired`);
+    await handleWishlistRemoval(item, `${item.title} marked as acquired`);
   });
 
   const removeButton = document.createElement('button');
   removeButton.className = 'ghost small';
   removeButton.textContent = 'Remove';
-  removeButton.addEventListener('click', () => {
+  removeButton.addEventListener('click', async () => {
     node.remove();
-    handleWishlistRemoval(item, `${item.title} removed`);
+    await handleWishlistRemoval(item, `${item.title} removed`);
   });
 
   actions.appendChild(purchaseButton);
@@ -141,16 +157,16 @@ async function persistWishlistItem(item) {
     'INSERT INTO wishlist (id, title, subtitle, createdAt) VALUES (?, ?, ?, ?)',
     [item.id, item.title, item.subtitle, Date.now()],
   );
-  persistDb();
+  await persistDb();
   const rowId = db.exec('SELECT last_insert_rowid() as rowId')[0]?.values[0][0];
   return { ...item, rowId };
 }
 
-function handleWishlistRemoval(item, message) {
+async function handleWishlistRemoval(item, message) {
   showToast('Wishlist updated', message);
   if (!db || !item?.rowId) return;
   db.run('DELETE FROM wishlist WHERE rowid = ?', [item.rowId]);
-  persistDb();
+  await persistDb();
 }
 
 function bindTabs() {
@@ -176,11 +192,7 @@ function bindAddForm() {
       quantity: Number(document.getElementById('item-quantity').value) || 1,
       notes: document.getElementById('item-notes').value,
     };
-
-    await persistInventoryItem(item);
-    renderInventory(loadInventory());
-    toggleModal(ui.addModal, false);
-    showToast('Item saved', `${item.name} added to inventory`);
+@@ -184,207 +232,174 @@ function bindAddForm() {
   });
 }
 
@@ -206,7 +218,6 @@ async function runSearch() {
   ui.rebrickableStatus.textContent = 'Searching...';
 
   const response = await fetch(`https://rebrickable.com/api/v3/lego/sets/?search=${encodeURIComponent(term)}&page_size=10`, {
-@@ -245,116 +215,161 @@ async function runSearch() {
   }
   const data = await response.json();
   renderSetResults(data.results || []);
@@ -244,16 +255,12 @@ function renderSetResults(results) {
 async function initDatabase() {
   ui.databaseStatus.textContent = 'Loading database...';
   SQL = await initSqlJs({ locateFile: (file) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${file}` });
-  const stored = localStorage.getItem('legolocker-db');
-  if (stored) {
-    const bytes = Uint8Array.from(atob(stored), (char) => char.charCodeAt(0));
-    db = new SQL.Database(bytes);
-  } else {
-    db = new SQL.Database();
-  }
+  await initFilesystem();
+  const persisted = readPersistedDatabase();
+  db = persisted ? new SQL.Database(persisted) : new SQL.Database();
   createTables();
   await ensureDefaults();
-  ui.databaseStatus.textContent = 'SQLite (in-browser) ready';
+  ui.databaseStatus.textContent = 'SQLite file (IndexedDB-backed) ready';
 }
 
 function createTables() {
@@ -297,7 +304,7 @@ async function ensureDefaults() {
       );
     });
   }
-  persistDb();
+  await persistDb();
 }
 
 function getCount(table) {
@@ -307,20 +314,13 @@ function getCount(table) {
   return Number(count) || 0;
 }
 
-function persistDb() {
-  if (!db) return;
-  const data = db.export();
-  const base64 = btoa(String.fromCharCode(...data));
-  localStorage.setItem('legolocker-db', base64);
-}
-
 async function persistInventoryItem(item) {
   if (!db) return item;
   db.run(
     'INSERT INTO inventory (id, name, type, quantity, notes, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
     [item.id, item.name, item.type, item.quantity, item.notes, Date.now()],
   );
-  persistDb();
+  await persistDb();
   const rowId = db.exec('SELECT last_insert_rowid() as rowId')[0]?.values[0][0];
   return { ...item, rowId };
 }
@@ -341,12 +341,11 @@ function loadWishlist() {
 
 function bindReset() {
   if (!ui.resetData) return;
-  ui.resetData.addEventListener('click', () => {
+  ui.resetData.addEventListener('click', async () => {
     if (!SQL) return;
-    localStorage.removeItem('legolocker-db');
     db = new SQL.Database();
     createTables();
-    ensureDefaults();
+    await ensureDefaults();
     renderInventory(loadInventory());
     renderWishlist(loadWishlist());
     showToast('Storage reset', 'Database restored to starter data');
@@ -368,23 +367,3 @@ async function init() {
 }
 
 init();
-web/assets/js/config.js
-+0
--6
-
-// Default configuration for local development.
-// Default configuration for local development.
-// Copy this file and update the values or rely on Docker env vars to overwrite via config.template.js.
-// Copy this file and update the values or rely on Docker env vars to overwrite via config.template.js.
-window.LEGOLOCKER_CONFIG = {
-window.LEGOLOCKER_CONFIG = {
-  firebaseApiKey: '',
-  firebaseAuthDomain: '',
-  firebaseProjectId: '',
-  firebaseStorageBucket: '',
-  firebaseMessagingSenderId: '',
-  firebaseAppId: '',
-  rebrickableApiKey: '',
-  rebrickableApiKey: '',
-};
-};
