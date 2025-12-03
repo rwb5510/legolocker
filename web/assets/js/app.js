@@ -98,6 +98,10 @@ function setActiveTab(id) {
       await persistInventoryItem(item);
       renderInventory(loadInventory());
       showToast('Inventory updated', `${result.set_num} added`);
+      if (db && auth?.currentUser) {
+        const inventoryRef = collection(db, 'inventory');
+        await addDoc(inventoryRef, { ...item, userId: auth.currentUser.uid, createdAt: Date.now() });
+      }
     });
     actions.appendChild(saveButton);
     ui.setResults.appendChild(node);
