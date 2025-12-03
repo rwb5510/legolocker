@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.1/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.12.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, deleteDoc, doc, getDocs, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.12.1/firebase-firestore.js";
 
 const ui = {
   tabs: document.querySelectorAll('.tab'),
@@ -26,50 +26,7 @@ const ui = {
 let auth;
 let db;
 const config = window.LEGOLOCKER_CONFIG || {};
-
-const defaultInventory = [
-  { id: '75192', name: 'Millennium Falcon (UCS)', type: 'set', quantity: 1, notes: 'Stored on display shelf.' },
-  { id: '21336', name: 'The Office', type: 'set', quantity: 1, notes: 'Missing stapler piece, needs replacement.' },
-  { id: '3001', name: 'Brick 2 x 4', type: 'part', quantity: 64, notes: 'Bulk lot for MOCs.' },
-];
-
-const defaultWishlist = [
-  { id: '10316', title: 'The Lord of the Rings: Rivendell', subtitle: 'Notify me when discounted.' },
-  { id: '31154', title: 'Forest Animals: Red Fox', subtitle: 'Great parts pack for orange slopes.' },
-];
-
-function createToast() {
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.innerHTML = `<div class="title"></div><div class="message"></div>`;
-  document.body.appendChild(toast);
-  return toast;
-}
-
-function showToast(title, message) {
-  const titleNode = ui.toast.querySelector('.title');
-  const messageNode = ui.toast.querySelector('.message');
-  titleNode.textContent = title;
-  messageNode.textContent = message;
-  ui.toast.classList.add('visible');
-  setTimeout(() => ui.toast.classList.remove('visible'), 3200);
-}
-
-function setActiveTab(id) {
-  ui.tabs.forEach((tab) => {
-    const isActive = tab.dataset.tab === id;
-    tab.classList.toggle('active', isActive);
-    tab.setAttribute('aria-selected', String(isActive));
-  });
-  ui.panels.forEach((panel) => {
-    panel.classList.toggle('active', panel.id === id);
-  });
-}
-
-function toggleModal(modal, show) {
-  if (show) {
-    modal.removeAttribute('hidden');
-  } else {
+@@ -73,88 +73,98 @@ function toggleModal(modal, show) {
     modal.setAttribute('hidden', '');
   }
 }
@@ -95,26 +52,13 @@ function renderInventory(items) {
 
 function renderWishlist(items) {
   ui.wishlistList.innerHTML = '';
-  items.forEach((item) => {
-    const node = ui.listTemplate.content.firstElementChild.cloneNode(true);
-    node.querySelector('.list-title').textContent = item.title;
-    node.querySelector('.list-subtitle').textContent = item.subtitle;
-    const actions = node.querySelector('.list-actions');
-    const removeButton = document.createElement('button');
-    removeButton.className = 'ghost small';
-    removeButton.textContent = 'Remove';
-    removeButton.addEventListener('click', () => {
-      node.remove();
-      showToast('Wishlist updated', `${item.title} removed`);
-    });
-    actions.appendChild(removeButton);
-    ui.wishlistList.appendChild(node);
-  });
+  items.forEach((item) => ui.wishlistList.appendChild(createWishlistNode(item)));
 }
 
-function addWishlistItem(item) {
+async function addWishlistItem(item) {
   ui.wishlistList.prepend(createWishlistNode(item));
   showToast('Added to wishlist', `${item.title} saved`);
+  await persistWishlistItem(item);
 }
 
 function createWishlistNode(item) {
@@ -122,15 +66,38 @@ function createWishlistNode(item) {
   node.querySelector('.list-title').textContent = item.title;
   node.querySelector('.list-subtitle').textContent = item.subtitle;
   const actions = node.querySelector('.list-actions');
+
   const purchaseButton = document.createElement('button');
   purchaseButton.className = 'primary small';
   purchaseButton.textContent = 'Mark acquired';
   purchaseButton.addEventListener('click', () => {
     node.remove();
-    showToast('Wishlist updated', `${item.title} marked as acquired`);
+    handleWishlistRemoval(item, `${item.title} marked as acquired`);
   });
+
+  const removeButton = document.createElement('button');
+  removeButton.className = 'ghost small';
+  removeButton.textContent = 'Remove';
+  removeButton.addEventListener('click', () => {
+    node.remove();
+    handleWishlistRemoval(item, `${item.title} removed`);
+  });
+
   actions.appendChild(purchaseButton);
+  actions.appendChild(removeButton);
   return node;
+}
+
+async function persistWishlistItem(item) {
+  if (!db || !auth?.currentUser) return;
+  const wishlistRef = collection(db, 'wishlist');
+  await addDoc(wishlistRef, { ...item, userId: auth.currentUser.uid, createdAt: Date.now() });
+}
+
+async function handleWishlistRemoval(item, message) {
+  showToast('Wishlist updated', message);
+  if (!item.docId || !db) return;
+  await deleteDoc(doc(db, 'wishlist', item.docId));
 }
 
 function bindTabs() {
@@ -158,78 +125,7 @@ function bindAddForm() {
       notes: document.getElementById('item-notes').value,
     };
 
-    renderInventory([item, ...getCurrentInventory()]);
-    toggleModal(ui.addModal, false);
-    showToast('Item saved', `${item.name} added to inventory`);
-
-    if (db && auth?.currentUser) {
-      const inventoryRef = collection(db, 'inventory');
-      await addDoc(inventoryRef, { ...item, userId: auth.currentUser.uid, createdAt: Date.now() });
-    }
-  });
-}
-
-function getCurrentInventory() {
-  return Array.from(ui.inventoryGrid.children).map((node) => ({
-    name: node.querySelector('.card-title').textContent,
-    notes: node.querySelector('.card-note').textContent,
-    quantity: Number(node.querySelector('.quantity').textContent),
-    type: node.querySelector('.type-pill').textContent,
-    id: node.querySelector('.id-pill').textContent,
-  }));
-}
-
-function bindAuthForm() {
-  ui.authForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!auth) {
-      showToast('Firebase not configured', 'Add your Firebase environment variables to enable sign-in.');
-      return;
-    }
-
-    const email = document.getElementById('auth-email').value;
-    const password = document.getElementById('auth-password').value;
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      showToast('Signed in', `Welcome back, ${email}`);
-    } catch (error) {
-      if (error.code === 'auth/user-not-found') {
-        await createUserWithEmailAndPassword(auth, email, password);
-        showToast('Account created', 'You are now signed in.');
-      } else {
-        showToast('Authentication failed', error.message);
-      }
-    }
-    toggleModal(ui.authModal, false);
-  });
-}
-
-function bindSearch() {
-  ui.searchButton.addEventListener('click', runSearch);
-  ui.searchInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      runSearch();
-    }
-  });
-}
-
-async function runSearch() {
-  const term = ui.searchInput.value.trim();
-  if (!term) return;
-
-  const apiKey = config.rebrickableApiKey;
-  if (!apiKey) {
-    ui.rebrickableStatus.textContent = 'Set REBRICKABLE_API_KEY to search';
-    return;
-  }
-  ui.rebrickableStatus.textContent = 'Searching...';
-
-  const response = await fetch(`https://rebrickable.com/api/v3/lego/sets/?search=${encodeURIComponent(term)}&page_size=10`, {
-    headers: { Authorization: `key ${apiKey}` },
-  });
-  if (!response.ok) {
-    ui.rebrickableStatus.textContent = 'Request failed';
+@@ -233,54 +243,58 @@ async function runSearch() {
     showToast('Rebrickable error', `${response.status}: ${response.statusText}`);
     return;
   }
@@ -255,10 +151,14 @@ function renderSetResults(results) {
     const saveButton = document.createElement('button');
     saveButton.className = 'primary small';
     saveButton.textContent = 'Add to inventory';
-    saveButton.addEventListener('click', () => {
+    saveButton.addEventListener('click', async () => {
       const item = { id: result.set_num, name: result.name, type: 'set', quantity: 1, notes: 'Imported from Rebrickable.' };
       renderInventory([item, ...getCurrentInventory()]);
       showToast('Inventory updated', `${result.set_num} added`);
+      if (db && auth?.currentUser) {
+        const inventoryRef = collection(db, 'inventory');
+        await addDoc(inventoryRef, { ...item, userId: auth.currentUser.uid, createdAt: Date.now() });
+      }
     });
     actions.appendChild(saveButton);
     ui.setResults.appendChild(node);
@@ -284,22 +184,7 @@ function configureFirebase() {
   db = getFirestore(app);
   ui.firebaseStatus.textContent = 'Firebase ready';
 
-  onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      ui.openAuth.textContent = 'Signed in';
-      await loadInventory(user.uid);
-      await loadWishlist(user.uid);
-    } else {
-      ui.openAuth.textContent = 'Sign in';
-      renderInventory(defaultInventory);
-      renderWishlist(defaultWishlist.map(createWishlistItem));
-    }
-  });
-}
-
-function createWishlistItem(item) {
-  return { id: item.id, title: item.title, subtitle: item.subtitle };
-}
+@@ -303,44 +317,44 @@ function createWishlistItem(item) {
 
 async function loadInventory(userId) {
   if (!db) return;
@@ -325,7 +210,7 @@ async function loadWishlist(userId) {
     renderWishlist(defaultWishlist.map(createWishlistItem));
     return;
   }
-  const items = snapshot.docs.map((doc) => ({ ...doc.data() }));
+  const items = snapshot.docs.map((docSnap) => ({ ...docSnap.data(), docId: docSnap.id }));
   renderWishlist(items);
 }
 
