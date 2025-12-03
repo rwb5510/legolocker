@@ -12,7 +12,7 @@ Frontend for tracking LEGO sets, parts, and wishlist items with in-browser SQLit
 - `docker/entrypoint.sh` – generates `config.js` from env vars before starting nginx
 - `Dockerfile` – serves the static site via nginx
 
-Inventory and wishlist data are stored in the browser using sql.js (SQLite compiled to WebAssembly) and persisted to an IndexedDB-backed `.db` file. Use the **Reset data** button in the header to clear the database and restore the starter records.
+Inventory and wishlist data are stored in the browser using sql.js (SQLite compiled to WebAssembly) and persisted to a `.db` file on the browser's Origin Private File System (File System Access API). Browsers without File System Access support will still run but keep data in-memory for the session only. Use the **Reset data** button in the header to clear the database and restore the starter records.
 
 ## Configuration
 Set the following environment variable (Docker will inject it into `config.js`):
