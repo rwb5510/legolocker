@@ -1,6 +1,3 @@
-+13
--0
-
 # AGENTS
 
 This file covers the entire repository.
