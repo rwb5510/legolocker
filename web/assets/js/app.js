@@ -1,30 +1,26 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.1/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.12.1/firebase-firestore.js";
+import initSqlJs from "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js";
 
 const ui = {
   tabs: document.querySelectorAll('.tab'),
   panels: document.querySelectorAll('.tab-panel'),
   addModal: document.getElementById('add-modal'),
-  authModal: document.getElementById('auth-modal'),
   openAdd: document.getElementById('open-add'),
-  openAuth: document.getElementById('open-auth'),
   addForm: document.getElementById('add-form'),
   inventoryGrid: document.getElementById('inventory-grid'),
   wishlistList: document.getElementById('wishlist-list'),
   listTemplate: document.getElementById('list-item-template'),
   cardTemplate: document.getElementById('inventory-card-template'),
-  firebaseStatus: document.getElementById('firebase-status'),
+  databaseStatus: document.getElementById('database-status'),
   rebrickableStatus: document.getElementById('rebrickable-status'),
   searchButton: document.getElementById('search-button'),
   searchInput: document.getElementById('set-search'),
   setResults: document.getElementById('set-results'),
-  authForm: document.getElementById('auth-form'),
+  resetData: document.getElementById('reset-data'),
   toast: createToast(),
 };
 
-let auth;
 let db;
+let SQL;
 const config = window.LEGOLOCKER_CONFIG || {};
 
 const defaultInventory = [
@@ -37,6 +33,10 @@ const defaultWishlist = [
   { id: '10316', title: 'The Lord of the Rings: Rivendell', subtitle: 'Notify me when discounted.' },
   { id: '31154', title: 'Forest Animals: Red Fox', subtitle: 'Great parts pack for orange slopes.' },
 ];
+
+function asWishlistItem(item) {
+  return { id: item.id, title: item.title, subtitle: item.subtitle };
+}
 
 function createToast() {
   const toast = document.createElement('div');
@@ -78,6 +78,9 @@ function renderInventory(items) {
   ui.inventoryGrid.innerHTML = '';
   items.forEach((item) => {
     const card = ui.cardTemplate.content.firstElementChild.cloneNode(true);
+    if (item.rowId) {
+      card.dataset.rowid = item.rowId;
+    }
     card.querySelector('.card-title').textContent = item.name;
     card.querySelector('.card-note').textContent = item.notes || 'No notes yet.';
     card.querySelector('.quantity').textContent = item.quantity;
@@ -85,6 +88,7 @@ function renderInventory(items) {
     card.querySelector('.type-pill').classList.add(`pill-${item.type}`);
     card.querySelector('.id-pill').textContent = item.id;
     card.querySelector('.add-to-wishlist').addEventListener('click', () => addWishlistItem({
+      rowId: item.rowId,
       id: item.id,
       title: item.name,
       subtitle: `${item.type.toUpperCase()} • ${item.quantity} pcs`,
@@ -95,25 +99,12 @@ function renderInventory(items) {
 
 function renderWishlist(items) {
   ui.wishlistList.innerHTML = '';
-  items.forEach((item) => {
-    const node = ui.listTemplate.content.firstElementChild.cloneNode(true);
-    node.querySelector('.list-title').textContent = item.title;
-    node.querySelector('.list-subtitle').textContent = item.subtitle;
-    const actions = node.querySelector('.list-actions');
-    const removeButton = document.createElement('button');
-    removeButton.className = 'ghost small';
-    removeButton.textContent = 'Remove';
-    removeButton.addEventListener('click', () => {
-      node.remove();
-      showToast('Wishlist updated', `${item.title} removed`);
-    });
-    actions.appendChild(removeButton);
-    ui.wishlistList.appendChild(node);
-  });
+  items.forEach((item) => ui.wishlistList.appendChild(createWishlistNode(item)));
 }
 
-function addWishlistItem(item) {
-  ui.wishlistList.prepend(createWishlistNode(item));
+async function addWishlistItem(item) {
+  const persisted = await persistWishlistItem(item);
+  ui.wishlistList.prepend(createWishlistNode(persisted));
   showToast('Added to wishlist', `${item.title} saved`);
 }
 
@@ -122,15 +113,44 @@ function createWishlistNode(item) {
   node.querySelector('.list-title').textContent = item.title;
   node.querySelector('.list-subtitle').textContent = item.subtitle;
   const actions = node.querySelector('.list-actions');
+
   const purchaseButton = document.createElement('button');
   purchaseButton.className = 'primary small';
   purchaseButton.textContent = 'Mark acquired';
   purchaseButton.addEventListener('click', () => {
     node.remove();
-    showToast('Wishlist updated', `${item.title} marked as acquired`);
+    handleWishlistRemoval(item, `${item.title} marked as acquired`);
   });
+
+  const removeButton = document.createElement('button');
+  removeButton.className = 'ghost small';
+  removeButton.textContent = 'Remove';
+  removeButton.addEventListener('click', () => {
+    node.remove();
+    handleWishlistRemoval(item, `${item.title} removed`);
+  });
+
   actions.appendChild(purchaseButton);
+  actions.appendChild(removeButton);
   return node;
+}
+
+async function persistWishlistItem(item) {
+  if (!db) return item;
+  db.run(
+    'INSERT INTO wishlist (id, title, subtitle, createdAt) VALUES (?, ?, ?, ?)',
+    [item.id, item.title, item.subtitle, Date.now()],
+  );
+  persistDb();
+  const rowId = db.exec('SELECT last_insert_rowid() as rowId')[0]?.values[0][0];
+  return { ...item, rowId };
+}
+
+function handleWishlistRemoval(item, message) {
+  showToast('Wishlist updated', message);
+  if (!db || !item?.rowId) return;
+  db.run('DELETE FROM wishlist WHERE rowid = ?', [item.rowId]);
+  persistDb();
 }
 
 function bindTabs() {
@@ -141,7 +161,6 @@ function bindTabs() {
 
 function bindModals() {
   ui.openAdd.addEventListener('click', () => toggleModal(ui.addModal, true));
-  ui.openAuth.addEventListener('click', () => toggleModal(ui.authModal, true));
   document.querySelectorAll('[data-close]').forEach((button) => {
     button.addEventListener('click', () => button.closest('.modal').setAttribute('hidden', ''));
   });
@@ -158,49 +177,10 @@ function bindAddForm() {
       notes: document.getElementById('item-notes').value,
     };
 
-    renderInventory([item, ...getCurrentInventory()]);
+    await persistInventoryItem(item);
+    renderInventory(loadInventory());
     toggleModal(ui.addModal, false);
     showToast('Item saved', `${item.name} added to inventory`);
-
-    if (db && auth?.currentUser) {
-      const inventoryRef = collection(db, 'inventory');
-      await addDoc(inventoryRef, { ...item, userId: auth.currentUser.uid, createdAt: Date.now() });
-    }
-  });
-}
-
-function getCurrentInventory() {
-  return Array.from(ui.inventoryGrid.children).map((node) => ({
-    name: node.querySelector('.card-title').textContent,
-    notes: node.querySelector('.card-note').textContent,
-    quantity: Number(node.querySelector('.quantity').textContent),
-    type: node.querySelector('.type-pill').textContent,
-    id: node.querySelector('.id-pill').textContent,
-  }));
-}
-
-function bindAuthForm() {
-  ui.authForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!auth) {
-      showToast('Firebase not configured', 'Add your Firebase environment variables to enable sign-in.');
-      return;
-    }
-
-    const email = document.getElementById('auth-email').value;
-    const password = document.getElementById('auth-password').value;
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      showToast('Signed in', `Welcome back, ${email}`);
-    } catch (error) {
-      if (error.code === 'auth/user-not-found') {
-        await createUserWithEmailAndPassword(auth, email, password);
-        showToast('Account created', 'You are now signed in.');
-      } else {
-        showToast('Authentication failed', error.message);
-      }
-    }
-    toggleModal(ui.authModal, false);
   });
 }
 
@@ -226,12 +206,7 @@ async function runSearch() {
   ui.rebrickableStatus.textContent = 'Searching...';
 
   const response = await fetch(`https://rebrickable.com/api/v3/lego/sets/?search=${encodeURIComponent(term)}&page_size=10`, {
-    headers: { Authorization: `key ${apiKey}` },
-  });
-  if (!response.ok) {
-    ui.rebrickableStatus.textContent = 'Request failed';
-    showToast('Rebrickable error', `${response.status}: ${response.statusText}`);
-    return;
+@@ -245,116 +215,161 @@ async function runSearch() {
   }
   const data = await response.json();
   renderSetResults(data.results || []);
@@ -255,9 +230,10 @@ function renderSetResults(results) {
     const saveButton = document.createElement('button');
     saveButton.className = 'primary small';
     saveButton.textContent = 'Add to inventory';
-    saveButton.addEventListener('click', () => {
+    saveButton.addEventListener('click', async () => {
       const item = { id: result.set_num, name: result.name, type: 'set', quantity: 1, notes: 'Imported from Rebrickable.' };
-      renderInventory([item, ...getCurrentInventory()]);
+      await persistInventoryItem(item);
+      renderInventory(loadInventory());
       showToast('Inventory updated', `${result.set_num} added`);
     });
     actions.appendChild(saveButton);
@@ -265,82 +241,150 @@ function renderSetResults(results) {
   });
 }
 
-function configureFirebase() {
-  if (!config.firebaseApiKey || !config.firebaseProjectId) {
-    ui.firebaseStatus.textContent = 'Set Firebase env vars to sync';
-    return;
+async function initDatabase() {
+  ui.databaseStatus.textContent = 'Loading database...';
+  SQL = await initSqlJs({ locateFile: (file) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${file}` });
+  const stored = localStorage.getItem('legolocker-db');
+  if (stored) {
+    const bytes = Uint8Array.from(atob(stored), (char) => char.charCodeAt(0));
+    db = new SQL.Database(bytes);
+  } else {
+    db = new SQL.Database();
   }
+  createTables();
+  await ensureDefaults();
+  ui.databaseStatus.textContent = 'SQLite (in-browser) ready';
+}
 
-  const firebaseConfig = {
-    apiKey: config.firebaseApiKey,
-    authDomain: config.firebaseAuthDomain,
-    projectId: config.firebaseProjectId,
-    storageBucket: config.firebaseStorageBucket,
-    messagingSenderId: config.firebaseMessagingSenderId,
-    appId: config.firebaseAppId,
-  };
-  const app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
-  ui.firebaseStatus.textContent = 'Firebase ready';
+function createTables() {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS inventory (
+      id TEXT,
+      name TEXT,
+      type TEXT,
+      quantity INTEGER,
+      notes TEXT,
+      createdAt INTEGER
+    );
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS wishlist (
+      id TEXT,
+      title TEXT,
+      subtitle TEXT,
+      createdAt INTEGER
+    );
+  `);
+}
 
-  onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      ui.openAuth.textContent = 'Signed in';
-      await loadInventory(user.uid);
-      await loadWishlist(user.uid);
-    } else {
-      ui.openAuth.textContent = 'Sign in';
-      renderInventory(defaultInventory);
-      renderWishlist(defaultWishlist.map(createWishlistItem));
-    }
+async function ensureDefaults() {
+  if (!db) return;
+  const inventoryCount = getCount('inventory');
+  if (!inventoryCount) {
+    defaultInventory.forEach((item) => {
+      db.run(
+        'INSERT INTO inventory (id, name, type, quantity, notes, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+        [item.id, item.name, item.type, item.quantity, item.notes, Date.now()],
+      );
+    });
+  }
+  const wishlistCount = getCount('wishlist');
+  if (!wishlistCount) {
+    defaultWishlist.forEach((item) => {
+      db.run(
+        'INSERT INTO wishlist (id, title, subtitle, createdAt) VALUES (?, ?, ?, ?)',
+        [item.id, item.title, item.subtitle, Date.now()],
+      );
+    });
+  }
+  persistDb();
+}
+
+function getCount(table) {
+  const result = db.exec(`SELECT COUNT(*) as count FROM ${table}`);
+  if (!result.length) return 0;
+  const [[count]] = result[0].values;
+  return Number(count) || 0;
+}
+
+function persistDb() {
+  if (!db) return;
+  const data = db.export();
+  const base64 = btoa(String.fromCharCode(...data));
+  localStorage.setItem('legolocker-db', base64);
+}
+
+async function persistInventoryItem(item) {
+  if (!db) return item;
+  db.run(
+    'INSERT INTO inventory (id, name, type, quantity, notes, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+    [item.id, item.name, item.type, item.quantity, item.notes, Date.now()],
+  );
+  persistDb();
+  const rowId = db.exec('SELECT last_insert_rowid() as rowId')[0]?.values[0][0];
+  return { ...item, rowId };
+}
+
+function loadInventory() {
+  if (!db) return defaultInventory;
+  const result = db.exec('SELECT rowid as rowId, id, name, type, quantity, notes FROM inventory ORDER BY createdAt DESC');
+  if (!result.length) return defaultInventory;
+  return result[0].values.map(([rowId, id, name, type, quantity, notes]) => ({ rowId, id, name, type, quantity, notes }));
+}
+
+function loadWishlist() {
+  if (!db) return defaultWishlist.map(asWishlistItem);
+  const result = db.exec('SELECT rowid as rowId, id, title, subtitle FROM wishlist ORDER BY createdAt DESC');
+  if (!result.length) return defaultWishlist.map(asWishlistItem);
+  return result[0].values.map(([rowId, id, title, subtitle]) => ({ rowId, id, title, subtitle }));
+}
+
+function bindReset() {
+  if (!ui.resetData) return;
+  ui.resetData.addEventListener('click', () => {
+    if (!SQL) return;
+    localStorage.removeItem('legolocker-db');
+    db = new SQL.Database();
+    createTables();
+    ensureDefaults();
+    renderInventory(loadInventory());
+    renderWishlist(loadWishlist());
+    showToast('Storage reset', 'Database restored to starter data');
   });
 }
 
-function createWishlistItem(item) {
-  return { id: item.id, title: item.title, subtitle: item.subtitle };
-}
-
-async function loadInventory(userId) {
-  if (!db) return;
-  const inventoryRef = collection(db, 'inventory');
-  const q = query(inventoryRef, where('userId', '==', userId), orderBy('createdAt', 'desc'));
-  const snapshot = await getDocs(q);
-  if (snapshot.empty) {
-    renderInventory(defaultInventory);
-    return;
-  }
-  const items = snapshot.docs.map((doc) => ({
-    ...doc.data(),
-  }));
-  renderInventory(items);
-}
-
-async function loadWishlist(userId) {
-  if (!db) return;
-  const wishlistRef = collection(db, 'wishlist');
-  const q = query(wishlistRef, where('userId', '==', userId));
-  const snapshot = await getDocs(q);
-  if (snapshot.empty) {
-    renderWishlist(defaultWishlist.map(createWishlistItem));
-    return;
-  }
-  const items = snapshot.docs.map((doc) => ({ ...doc.data() }));
-  renderWishlist(items);
-}
-
-function init() {
+async function init() {
   bindTabs();
   bindModals();
   bindAddForm();
-  bindAuthForm();
   bindSearch();
-  renderInventory(defaultInventory);
-  renderWishlist(defaultWishlist.map(createWishlistItem));
-  configureFirebase();
+  bindReset();
+  await initDatabase();
+  renderInventory(loadInventory());
+  renderWishlist(loadWishlist());
   if (config.rebrickableApiKey) {
     ui.rebrickableStatus.textContent = 'Rebrickable ready';
   }
 }
 
 init();
+web/assets/js/config.js
++0
+-6
+
+// Default configuration for local development.
+// Default configuration for local development.
+// Copy this file and update the values or rely on Docker env vars to overwrite via config.template.js.
+// Copy this file and update the values or rely on Docker env vars to overwrite via config.template.js.
+window.LEGOLOCKER_CONFIG = {
+window.LEGOLOCKER_CONFIG = {
+  firebaseApiKey: '',
+  firebaseAuthDomain: '',
+  firebaseProjectId: '',
+  firebaseStorageBucket: '',
+  firebaseMessagingSenderId: '',
+  firebaseAppId: '',
+  rebrickableApiKey: '',
+  rebrickableApiKey: '',
+};
+};
