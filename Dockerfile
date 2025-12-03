@@ -1,11 +1,19 @@
-FROM nginx:1.27-alpine
+FROM node:18-alpine
 
-RUN apk add --no-cache bash gettext
+# Install build dependencies for better-sqlite3 (python, make, g++)
+# These are often needed because sqlite driver is a native module
+RUN apk add --no-cache python3 make g++
 
-COPY web /usr/share/nginx/html
-COPY docker/entrypoint.sh /entrypoint.sh
+WORKDIR /app
 
-RUN chmod +x /entrypoint.sh
+COPY package.json .
+RUN npm install
 
-EXPOSE 80
-CMD ["/entrypoint.sh"]
+COPY . .
+
+# Create directory for db volume
+RUN mkdir -p data
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
