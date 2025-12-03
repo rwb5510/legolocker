@@ -21,7 +21,7 @@
       </div>
     </div>
     <div class="header-actions">
-      <button class="ghost" id="open-auth">Sign in</button>
+      <button class="ghost" id="reset-data">Reset data</button>
       <button class="primary" id="open-add">Add item</button>
     </div>
   </header>
@@ -39,7 +39,7 @@
           <h2>Inventory overview</h2>
           <p>Recently added items and what needs to be restocked.</p>
         </div>
-        <div class="chip" id="firebase-status">Checking Firebase…</div>
+        <div class="chip" id="database-status">SQLite initializing…</div>
       </div>
       <div class="card-grid" id="inventory-grid">
         <!-- cards injected by app.js -->
@@ -65,34 +65,7 @@
 
     <section id="wishlist" class="tab-panel" aria-labelledby="Wishlist">
       <div class="panel-header">
-        <div>
-          <h2>Wishlist</h2>
-          <p>Keep track of the sets you still want to build.</p>
-        </div>
-      </div>
-      <div class="list" id="wishlist-list">
-        <!-- wishlist items injected by app.js -->
-      </div>
-    </section>
-  </main>
-
-  <div class="modal" id="add-modal" role="dialog" aria-modal="true" aria-labelledby="add-modal-title" hidden>
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <h3 id="add-modal-title">Add an inventory item</h3>
-          <p>Save LEGO sets, parts, or custom builds with a note.</p>
-        </div>
-        <button class="icon" data-close>×</button>
-      </div>
-      <form id="add-form" class="stack">
-        <label>
-          <span>Type</span>
-          <select id="item-type" required>
-            <option value="set">Set</option>
-            <option value="part">Part</option>
-            <option value="moc">Custom build</option>
-          </select>
+@@ -96,77 +96,50 @@
         </label>
         <label>
           <span>Name</span>
@@ -114,33 +87,6 @@
           <button type="button" class="ghost" data-close>Cancel</button>
           <button type="submit" class="primary">Save item</button>
         </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" hidden>
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <h3 id="auth-modal-title">Sign in to sync</h3>
-          <p>Use Firebase Authentication to keep your locker in sync.</p>
-        </div>
-        <button class="icon" data-close>×</button>
-      </div>
-      <form id="auth-form" class="stack">
-        <label>
-          <span>Email</span>
-          <input id="auth-email" type="email" required placeholder="you@example.com">
-        </label>
-        <label>
-          <span>Password</span>
-          <input id="auth-password" type="password" required>
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="ghost" data-close>Cancel</button>
-          <button type="submit" class="primary">Sign in / Register</button>
-        </div>
-        <p class="helper-text">New users will be registered automatically.</p>
       </form>
     </div>
   </div>
