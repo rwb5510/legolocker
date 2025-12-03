@@ -27,5 +27,21 @@ Your database is stored in the `./data` directory on your host machine. This fol
 To run without Docker:
 1. `npm install`
 2. `node server.js`
-  
-Quick Start
+
+
+---
+## Structure
+
+```
+lego-locker/
+├── public/
+│   └── index.html      # The modified web app
+├── data/               # Directory for persistent DB storage
+│   └── lego.db         # (Created automatically at runtime)
+├── Dockerfile
+├── compose.yml
+├── package.json
+├── server.js           # The backend API
+└── README.md
+```
+---
