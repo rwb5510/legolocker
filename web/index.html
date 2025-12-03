@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LegoLocker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <script src="assets/js/config.js"></script>
+  <script type="module" src="assets/js/app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark">LL</div>
+      <div>
+        <div class="brand-name">LegoLocker</div>
+        <div class="brand-tag">Track sets, parts, and wishlists in one place.</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="ghost" id="open-auth">Sign in</button>
+      <button class="primary" id="open-add">Add item</button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Navigation">
+    <button class="tab active" data-tab="inventory" aria-selected="true">Inventory</button>
+    <button class="tab" data-tab="sets" aria-selected="false">Sets</button>
+    <button class="tab" data-tab="wishlist" aria-selected="false">Wishlist</button>
+  </nav>
+
+  <main>
+    <section id="inventory" class="tab-panel active" aria-labelledby="Inventory">
+      <div class="panel-header">
+        <div>
+          <h2>Inventory overview</h2>
+          <p>Recently added items and what needs to be restocked.</p>
+        </div>
+        <div class="chip" id="firebase-status">Checking Firebase…</div>
+      </div>
+      <div class="card-grid" id="inventory-grid">
+        <!-- cards injected by app.js -->
+      </div>
+    </section>
+
+    <section id="sets" class="tab-panel" aria-labelledby="Sets">
+      <div class="panel-header">
+        <div>
+          <h2>Set search</h2>
+          <p>Search Rebrickable for sets and add them to your locker.</p>
+        </div>
+        <div class="chip" id="rebrickable-status">API key not configured</div>
+      </div>
+      <div class="search-row">
+        <input id="set-search" type="search" placeholder="Search sets by name or number" aria-label="Search sets">
+        <button class="primary" id="search-button">Search</button>
+      </div>
+      <div id="set-results" class="list">
+        <!-- results injected by app.js -->
+      </div>
+    </section>
+
+    <section id="wishlist" class="tab-panel" aria-labelledby="Wishlist">
+      <div class="panel-header">
+        <div>
+          <h2>Wishlist</h2>
+          <p>Keep track of the sets you still want to build.</p>
+        </div>
+      </div>
+      <div class="list" id="wishlist-list">
+        <!-- wishlist items injected by app.js -->
+      </div>
+    </section>
+  </main>
+
+  <div class="modal" id="add-modal" role="dialog" aria-modal="true" aria-labelledby="add-modal-title" hidden>
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h3 id="add-modal-title">Add an inventory item</h3>
+          <p>Save LEGO sets, parts, or custom builds with a note.</p>
+        </div>
+        <button class="icon" data-close>×</button>
+      </div>
+      <form id="add-form" class="stack">
+        <label>
+          <span>Type</span>
+          <select id="item-type" required>
+            <option value="set">Set</option>
+            <option value="part">Part</option>
+            <option value="moc">Custom build</option>
+          </select>
+        </label>
+        <label>
+          <span>Name</span>
+          <input id="item-name" type="text" required placeholder="e.g., Millennium Falcon">
+        </label>
+        <label>
+          <span>Number / Part ID</span>
+          <input id="item-number" type="text" required placeholder="75192">
+        </label>
+        <label>
+          <span>Quantity</span>
+          <input id="item-quantity" type="number" min="1" value="1" required>
+        </label>
+        <label>
+          <span>Notes</span>
+          <textarea id="item-notes" rows="3" placeholder="Condition, missing parts, storage bin, etc."></textarea>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close>Cancel</button>
+          <button type="submit" class="primary">Save item</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" hidden>
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h3 id="auth-modal-title">Sign in to sync</h3>
+          <p>Use Firebase Authentication to keep your locker in sync.</p>
+        </div>
+        <button class="icon" data-close>×</button>
+      </div>
+      <form id="auth-form" class="stack">
+        <label>
+          <span>Email</span>
+          <input id="auth-email" type="email" required placeholder="you@example.com">
+        </label>
+        <label>
+          <span>Password</span>
+          <input id="auth-password" type="password" required>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close>Cancel</button>
+          <button type="submit" class="primary">Sign in / Register</button>
+        </div>
+        <p class="helper-text">New users will be registered automatically.</p>
+      </form>
+    </div>
+  </div>
+
+  <template id="inventory-card-template">
+    <article class="card">
+      <div class="card-meta">
+        <span class="pill type-pill"></span>
+        <span class="muted id-pill"></span>
+      </div>
+      <h3 class="card-title"></h3>
+      <p class="card-note"></p>
+      <div class="card-footer">
+        <span class="muted">Quantity: <strong class="quantity"></strong></span>
+        <button class="ghost small add-to-wishlist">Add to wishlist</button>
+      </div>
+    </article>
+  </template>
+
+  <template id="list-item-template">
+    <div class="list-item">
+      <div>
+        <div class="list-title"></div>
+        <div class="muted list-subtitle"></div>
+      </div>
+      <div class="list-actions"></div>
+    </div>
+  </template>
+</body>
+</html>
